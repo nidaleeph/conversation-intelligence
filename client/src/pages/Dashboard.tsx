@@ -4,13 +4,12 @@
 // Red = Buyer, Blue = Tenant, Gold = For Sale, Orange = For Rent, Purple = Service
 // ============================================================
 
-import { useState, useMemo, useCallback } from "react";
-import { Link } from "wouter";
+import { useState, useMemo } from "react";
 import {
-  MessageSquare, Radio, Search, Home, Building, Wrench, Bell,
-  AlertTriangle, TrendingUp, Users, MapPin, Eye, ChevronDown,
-  Filter, Bookmark, ArrowUpRight, Clock, X, Banknote, BedDouble,
-  User, Calendar, Shield
+  MessageSquare, Radio, Search, Home,
+  AlertTriangle, TrendingUp, Users, MapPin,
+  Filter, Bookmark, ArrowUpRight, X, Banknote, BedDouble,
+  User, Calendar,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -18,19 +17,49 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip,
   ResponsiveContainer, PieChart, Pie, Cell, CartesianGrid,
 } from "recharts";
-import {
-  getKPIs, getAreaStats, getBudgetDistribution, getBedroomDistribution,
-  getPropertyTypeDistribution, signals, alerts, watchlists,
-  type Signal, type SignalStatus,
-} from "@/lib/data";
+import { useKPIs, useDistributions } from "@/hooks/queries/useAnalytics";
+import { useSignals } from "@/hooks/queries/useSignals";
+import { useAlerts } from "@/hooks/queries/useAlerts";
+
+// Local type definitions (replaces mock Signal type)
+type SignalStatus = "new" | "reviewed" | "alerted" | "matched" | "New" | "Reviewed" | "Alerted" | "Matched";
+
+interface ApiSignal {
+  id: string;
+  messageId: string;
+  type: string;
+  classificationMethod: string;
+  confidence: number;
+  location: string[];
+  postcodes: string[];
+  budgetMin: number | null;
+  budgetMax: number | null;
+  propertyType: string | null;
+  bedrooms: number | null;
+  bathrooms: number | null;
+  sqft: number | null;
+  outsideSpace: boolean | null;
+  parking: boolean | null;
+  condition: string | null;
+  summary: string;
+  status: string;
+  reviewedBy: string | null;
+  actionable: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
 
 const HERO_IMAGE = "https://d2xsxph8kpxj0f.cloudfront.net/310519663265683302/Mchx73LWdrS7gUExt8LJHT/hero-dark-network-jWoKoERoTMuRyKq9Q6VWGu.webp";
 
-const statusColors: Record<SignalStatus, string> = {
+const statusColors: Record<string, string> = {
   New: "bg-[#77d5c0]/20 text-[#77d5c0]",
+  new: "bg-[#77d5c0]/20 text-[#77d5c0]",
   Reviewed: "bg-[#3b82f6]/20 text-[#3b82f6]",
+  reviewed: "bg-[#3b82f6]/20 text-[#3b82f6]",
   Alerted: "bg-[#d4a843]/20 text-[#d4a843]",
+  alerted: "bg-[#d4a843]/20 text-[#d4a843]",
   Matched: "bg-[#2ecc71]/20 text-[#2ecc71]",
+  matched: "bg-[#2ecc71]/20 text-[#2ecc71]",
 };
 
 // Strong, distinct colours per signal type for instant recognition
@@ -61,21 +90,6 @@ const BUDGET_PRESETS = [
   { label: "£10m+", min: 10_000_000, max: Infinity },
 ];
 
-function parseBudgetValue(budget: string): number | null {
-  if (!budget || budget === "-" || budget === "\u2014" || budget.toLowerCase() === "flexible") return null;
-  if (budget.toLowerCase().includes("pcm") || budget.toLowerCase().includes("pw")) return null;
-  const cleaned = budget.replace(/,/g, "").replace(/\u00a3/g, "");
-  const nums = cleaned.match(/[\d.]+/g);
-  if (!nums) return null;
-  const raw = parseFloat(nums[nums.length - 1]);
-  if (isNaN(raw)) return null;
-  const lc = budget.toLowerCase();
-  if (lc.includes("k")) return raw * 1000;
-  if (lc.includes("m")) return raw * 1_000_000;
-  if (raw >= 100000) return raw;
-  if (raw < 100) return raw * 1_000_000;
-  return raw * 1000;
-}
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
   return (
@@ -114,7 +128,20 @@ function formatSignalDate(ts: string) {
   return `${day} ${month} ${year}, ${hours}:${mins}`;
 }
 
-function SignalCard({ signal }: { signal: Signal }) {
+function formatBudget(budgetMin: number | null, budgetMax: number | null): string {
+  if (budgetMax === null && budgetMin === null) return "—";
+  const fmt = (n: number) => {
+    if (n >= 1_000_000) return `£${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}m`;
+    if (n >= 1_000) return `£${(n / 1_000).toFixed(0)}k`;
+    return `£${n}`;
+  };
+  if (budgetMax !== null && budgetMin !== null && budgetMin > 0) return `${fmt(budgetMin)}–${fmt(budgetMax)}`;
+  if (budgetMax !== null) return `Up to ${fmt(budgetMax)}`;
+  if (budgetMin !== null) return `From ${fmt(budgetMin)}`;
+  return "—";
+}
+
+function SignalCard({ signal }: { signal: ApiSignal }) {
   const typeColor = signalTypeColors[signal.type] || "#6b7280";
   const uniquePostcodes = Array.from(new Set(signal.postcodes));
   return (
@@ -134,7 +161,7 @@ function SignalCard({ signal }: { signal: Signal }) {
             </span>
             <span className="flex items-center gap-1 text-[10px] text-[#6b7280]">
               <Calendar className="w-3 h-3" />
-              {formatSignalDate(signal.timestamp)}
+              {formatSignalDate(signal.createdAt)}
             </span>
           </div>
           <Badge className={`text-[10px] px-1.5 py-0 h-5 font-medium border-0 ${statusColors[signal.status]}`}>
@@ -160,7 +187,7 @@ function SignalCard({ signal }: { signal: Signal }) {
             <div className="text-[9px] uppercase tracking-[0.1em] text-[#6b7280] mb-0.5">Budget</div>
             <div className="flex items-center gap-1">
               <Banknote className="w-3.5 h-3.5 text-[#6b7280]" />
-              <span className="text-[13px] font-bold text-white">{signal.budget !== "-" ? signal.budget : "—"}</span>
+              <span className="text-[13px] font-bold text-white">{formatBudget(signal.budgetMin, signal.budgetMax)}</span>
             </div>
           </div>
 
@@ -169,7 +196,7 @@ function SignalCard({ signal }: { signal: Signal }) {
             <div className="text-[9px] uppercase tracking-[0.1em] text-[#6b7280] mb-0.5">Beds</div>
             <div className="flex items-center gap-1">
               <BedDouble className="w-3.5 h-3.5 text-[#6b7280]" />
-              <span className="text-[13px] font-bold text-white">{signal.bedrooms !== "-" ? signal.bedrooms : "—"}</span>
+              <span className="text-[13px] font-bold text-white">{signal.bedrooms !== null ? signal.bedrooms : "—"}</span>
             </div>
           </div>
 
@@ -178,44 +205,32 @@ function SignalCard({ signal }: { signal: Signal }) {
             <div className="text-[9px] uppercase tracking-[0.1em] text-[#6b7280] mb-0.5">Type</div>
             <div className="flex items-center gap-1">
               <Home className="w-3.5 h-3.5 text-[#6b7280]" />
-              <span className="text-xs font-medium text-[#c9cdd3]">{signal.propertyType !== "Any" ? signal.propertyType : "—"}</span>
+              <span className="text-xs font-medium text-[#c9cdd3]">{signal.propertyType ?? "—"}</span>
             </div>
           </div>
 
-          {/* Agent */}
+          {/* Reviewed By */}
           <div>
-            <div className="text-[9px] uppercase tracking-[0.1em] text-[#6b7280] mb-0.5">Agent</div>
+            <div className="text-[9px] uppercase tracking-[0.1em] text-[#6b7280] mb-0.5">Reviewed By</div>
             <div className="flex items-center gap-1">
               <User className="w-3.5 h-3.5 text-[#6b7280]" />
-              <Link href={`/agents/${encodeURIComponent(signal.agent)}`} className="text-xs font-medium text-[#c9cdd3] truncate hover:text-[#77d5c0] transition-colors underline-offset-2 hover:underline">{signal.agent}</Link>
+              <span className="text-xs font-medium text-[#c9cdd3] truncate">{signal.reviewedBy ?? "—"}</span>
             </div>
           </div>
         </div>
 
         {/* Extra tags row */}
         <div className="flex flex-wrap gap-1.5 mb-2.5">
-          {signal.retained === "Yes" && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#d4a843]/20 text-[#d4a843] font-bold uppercase tracking-wider border border-[#d4a843]/30 flex items-center gap-1">
-              <Shield className="w-2.5 h-2.5" />
-              Retained
-            </span>
+          {signal.outsideSpace === true && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#3a3f45]/50 text-[#9ca3af]">Outside Space</span>
           )}
-          {signal.feeRequired === "Yes" && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#77d5c0]/20 text-[#77d5c0] font-bold uppercase tracking-wider border border-[#77d5c0]/30 flex items-center gap-1">
-              <Banknote className="w-2.5 h-2.5" />
-              Fee
-            </span>
-          )}
-          {signal.outsideSpace !== "-" && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#3a3f45]/50 text-[#9ca3af]">{signal.outsideSpace}</span>
-          )}
-          {signal.condition !== "-" && (
+          {signal.condition && (
             <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#3a3f45]/50 text-[#9ca3af]">{signal.condition}</span>
           )}
-          {signal.parking === "Required" && (
+          {signal.parking === true && (
             <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#3a3f45]/50 text-[#9ca3af]">Parking</span>
           )}
-          {signal.sqft !== "-" && (
+          {signal.sqft !== null && (
             <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#3a3f45]/50 text-[#9ca3af]">{signal.sqft} sqft</span>
           )}
         </div>
@@ -291,18 +306,53 @@ function MultiSelectChips({
 }
 
 export default function Dashboard() {
-  const kpis = useMemo(() => getKPIs(), []);
-  const areaStats = useMemo(() => getAreaStats(), []);
-  const budgetDist = useMemo(() => getBudgetDistribution(), []);
-  const bedroomDist = useMemo(() => getBedroomDistribution(), []);
-  const propertyTypes = useMemo(() => getPropertyTypeDistribution(), []);
+  const { data: kpiData } = useKPIs();
+  const { data: distData } = useDistributions();
+  const { data: signalsData } = useSignals({ limit: 100 });
+  const { data: alertsData } = useAlerts({ limit: 10 });
+  const recentAlerts = alertsData?.alerts ?? [];
+
+  // Default values while loading
+  const kpis = kpiData ?? {
+    totalMessages: 0,
+    totalSignals: 0,
+    actionableSignals: 0,
+    buyerSearches: 0,
+    tenantSearches: 0,
+    propertiesForSale: 0,
+    propertiesForRent: 0,
+    pendingReview: 0,
+    totalAgents: 0,
+  };
+
+  // Map API distribution shapes to what the charts expect
+  const areaStats: { area: string; total: number; buyers: number; tenants: number; sales: number; rentals: number }[] =
+    ((distData?.areaStats ?? []) as { area: string; count: number }[]).map(r => ({
+      area: r.area,
+      total: r.count,
+      buyers: 0,
+      tenants: 0,
+      sales: 0,
+      rentals: 0,
+    }));
+  const budgetDist: { label: string; count: number }[] =
+    ((distData?.budgetDistribution ?? []) as { range: string; count: number }[]).map(r => ({
+      label: r.range,
+      count: r.count,
+    }));
+  const bedroomDist: { beds: string; count: number }[] =
+    ((distData?.bedroomDistribution ?? []) as { bedrooms: number; count: number }[]).map(r => ({
+      beds: String(r.bedrooms),
+      count: r.count,
+    }));
+  const propertyTypes: { type: string; count: number }[] = (distData?.typeDistribution ?? []) as { type: string; count: number }[];
+
+  const allSignals: ApiSignal[] = signalsData?.signals ?? [];
+
   const [selectedAreas, setSelectedAreas] = useState<Set<string>>(new Set());
   const [selectedPostcodes, setSelectedPostcodes] = useState<Set<string>>(new Set());
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set());
   const [budgetRange, setBudgetRange] = useState<{ min: number; max: number }>({ min: 0, max: Infinity });
-  const [retainedOnly, setRetainedOnly] = useState(false);
-  const [feeOnly, setFeeOnly] = useState(false);
-  const budgetLabel = BUDGET_PRESETS.find(p => p.min === budgetRange.min && p.max === budgetRange.max)?.label || "Custom";
 
   const toggleArea = (area: string) => {
     setSelectedAreas(prev => {
@@ -329,20 +379,20 @@ export default function Dashboard() {
   };
 
   const filteredSignals = useMemo(() => {
-    return signals.filter(s => {
+    return allSignals.filter(s => {
       if (selectedAreas.size > 0 && !s.location.some(l => selectedAreas.has(l))) return false;
       if (selectedPostcodes.size > 0 && !s.postcodes.some(pc => selectedPostcodes.has(pc))) return false;
       if (selectedTypes.size > 0 && !selectedTypes.has(s.type)) return false;
       if (budgetRange.min > 0 || budgetRange.max < Infinity) {
-        const val = parseBudgetValue(s.budget);
+        // Use budgetMax for filtering; skip signals with no budget data
+        const val = s.budgetMax ?? s.budgetMin;
         if (val === null) return false;
         if (val < budgetRange.min || val > budgetRange.max) return false;
       }
-      if (retainedOnly && s.retained !== "Yes") return false;
-      if (feeOnly && s.feeRequired !== "Yes") return false;
+      // API signals don't have retained/feeRequired fields; skip those filters
       return true;
     });
-  }, [selectedAreas, selectedPostcodes, selectedTypes, budgetRange, retainedOnly, feeOnly]);
+  }, [allSignals, selectedAreas, selectedPostcodes, selectedTypes, budgetRange]);
 
   const topAreas = areaStats.slice(0, 10);
 
@@ -370,18 +420,16 @@ export default function Dashboard() {
         {/* KPI Bar */}
         <section>
           <SectionHeader>Executive Snapshot</SectionHeader>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-11 gap-2 stagger-children">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-9 gap-2 stagger-children">
             <MetricCard label="Messages" value={kpis.totalMessages} icon={MessageSquare} />
             <MetricCard label="Signals" value={kpis.actionableSignals} icon={Radio} accent />
             <MetricCard label="Buyer Searches" value={kpis.buyerSearches} icon={Search} accent />
             <MetricCard label="Tenant Searches" value={kpis.tenantSearches} icon={Home} />
-            <MetricCard label="Seller Signals" value={kpis.sellerSignals} icon={TrendingUp} />
-            <MetricCard label="Landlord Signals" value={kpis.landlordSignals} icon={Building} />
             <MetricCard label="For Sale" value={kpis.propertiesForSale} icon={ArrowUpRight} />
             <MetricCard label="For Rent" value={kpis.propertiesForRent} icon={Home} />
-            <MetricCard label="Services" value={kpis.serviceRequests} icon={Wrench} />
-            <MetricCard label="Alerts Sent" value={kpis.alertsSent} icon={Bell} accent />
-            <MetricCard label="High Priority" value={kpis.highPriorityMatches} icon={AlertTriangle} accent />
+            <MetricCard label="Pending Review" value={kpis.pendingReview} icon={AlertTriangle} accent />
+            <MetricCard label="Total Signals" value={kpis.totalSignals} icon={TrendingUp} />
+            <MetricCard label="Agents" value={kpis.totalAgents} icon={Users} />
           </div>
         </section>
 
@@ -411,7 +459,7 @@ export default function Dashboard() {
             </div>
             <span className="text-[10px] text-[#6b7280]">
               {filteredSignals.length} signal{filteredSignals.length !== 1 ? "s" : ""}
-              {(selectedAreas.size > 0 || selectedPostcodes.size > 0 || selectedTypes.size > 0 || budgetRange.min > 0 || budgetRange.max < Infinity || retainedOnly || feeOnly) && (
+              {(selectedAreas.size > 0 || selectedPostcodes.size > 0 || selectedTypes.size > 0 || budgetRange.min > 0 || budgetRange.max < Infinity) && (
                 <span className="text-[#77d5c0] ml-1">(active)</span>
               )}
             </span>
@@ -450,34 +498,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Retained & Fee Required Filters */}
-          <div className="flex flex-col gap-1.5">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#6b7280]">Quick Filters</span>
-            <div className="flex flex-wrap gap-1.5">
-              <button
-                onClick={() => setRetainedOnly(!retainedOnly)}
-                className={`text-[11px] px-2.5 py-1 rounded-md border transition-all duration-150 font-medium flex items-center gap-1.5 ${
-                  retainedOnly
-                    ? "border-[#d4a843]/50 bg-[#d4a843]/15 text-[#d4a843]"
-                    : "border-[#3a3f45]/50 text-[#6b7280] hover:text-[#9ca3af] hover:border-[#3a3f45]"
-                }`}
-              >
-                <Shield className="w-3 h-3" />
-                Retained Only
-              </button>
-              <button
-                onClick={() => setFeeOnly(!feeOnly)}
-                className={`text-[11px] px-2.5 py-1 rounded-md border transition-all duration-150 font-medium flex items-center gap-1.5 ${
-                  feeOnly
-                    ? "border-[#77d5c0]/50 bg-[#77d5c0]/15 text-[#77d5c0]"
-                    : "border-[#3a3f45]/50 text-[#6b7280] hover:text-[#9ca3af] hover:border-[#3a3f45]"
-                }`}
-              >
-                <Banknote className="w-3 h-3" />
-                Fee Required
-              </button>
-            </div>
-          </div>
         </section>
 
         {/* Main Grid: Signal Feed + Geographic Panel */}
@@ -635,28 +655,32 @@ export default function Dashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {alerts.slice(0, 12).map(alert => (
-                    <tr key={alert.id} className="border-b border-[#3a3f45]/20 hover:bg-[#2a2f35]/50 transition-colors">
-                      <td className="py-2 px-3 text-[#c9cdd3]">{alert.recipientAgent}</td>
-                      <td className="py-2 px-3 text-[#9ca3af]">{alert.matchingArea}</td>
-                      <td className="py-2 px-3">
-                        <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: `${signalTypeColors[alert.signalType] || "#6b7280"}20`, color: signalTypeColors[alert.signalType] || "#6b7280" }}>
-                          {alert.signalType}
-                        </span>
-                      </td>
-                      <td className="py-2 px-3 text-[#9ca3af] max-w-[280px] truncate">{alert.summary}</td>
-                      <td className="py-2 px-3 text-[#9ca3af]">{alert.originatingAgent}</td>
-                      <td className="py-2 px-3">
-                        <Badge className={`text-[10px] px-1.5 py-0 h-5 border-0 font-medium ${
-                          alert.priority === "High" ? "bg-[#e74c3c]/20 text-[#e74c3c]" :
-                          alert.priority === "Medium" ? "bg-[#d4a843]/20 text-[#d4a843]" :
-                          "bg-[#6b7280]/20 text-[#6b7280]"
-                        }`}>
-                          {alert.priority}
-                        </Badge>
+                  {recentAlerts.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="py-8 text-center text-[10px] text-[#6b7280]">
+                        No alerts yet — ingest matching messages to generate alerts
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    recentAlerts.map((alert: any) => (
+                      <tr key={alert.id} className="border-b border-[#3a3f45]/20 hover:bg-[#1a1e23]/40 transition-colors">
+                        <td className="py-2 px-3 text-[#c9cdd3] truncate max-w-[120px]">{alert.recipientName ?? "—"}</td>
+                        <td className="py-2 px-3 text-[#c9cdd3] truncate max-w-[100px]">{alert.area ?? "—"}</td>
+                        <td className="py-2 px-3 text-[#c9cdd3]">{alert.type ?? "—"}</td>
+                        <td className="py-2 px-3 text-[#9ca3af] truncate max-w-[200px]">{alert.summary ?? "—"}</td>
+                        <td className="py-2 px-3 text-[#6b7280] whitespace-nowrap">
+                          {new Date(alert.createdAt).toLocaleTimeString()}
+                        </td>
+                        <td className="py-2 px-3">
+                          <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                            alert.priority === "high" ? "bg-red-500/20 text-red-400" :
+                            alert.priority === "medium" ? "bg-yellow-500/20 text-yellow-400" :
+                            "bg-green-500/20 text-green-400"
+                          }`}>{alert.priority ?? "—"}</span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -666,22 +690,9 @@ export default function Dashboard() {
         {/* Watchlists */}
         <section className="pb-8">
           <SectionHeader>Saved Watchlists</SectionHeader>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
-            {watchlists.map(wl => (
-              <div key={wl.id} className="bg-[#22272d] border border-[#3a3f45]/50 rounded-lg p-3.5 hover:border-[#77d5c0]/30 transition-colors cursor-pointer group">
-                <div className="flex items-center justify-between mb-2">
-                  <Bookmark className="w-3.5 h-3.5 text-[#77d5c0] group-hover:scale-110 transition-transform" />
-                  <span className="text-lg font-bold text-[#77d5c0]">{wl.matchCount}</span>
-                </div>
-                <h3 className="text-xs font-semibold text-white mb-1">{wl.name}</h3>
-                <p className="text-[10px] text-[#6b7280]">{wl.areas.join(", ")}</p>
-                <div className="flex flex-wrap gap-1 mt-2">
-                  {wl.signalTypes.map(st => (
-                    <span key={st} className="text-[9px] px-1.5 py-0.5 rounded bg-[#3a3f45]/50 text-[#9ca3af]">{st}</span>
-                  ))}
-                </div>
-              </div>
-            ))}
+          <div className="flex items-center justify-center py-8 text-[#6b7280]">
+            <Bookmark className="w-5 h-5 mr-2 opacity-40" />
+            <span className="text-sm">Watchlists coming soon</span>
           </div>
         </section>
       </div>

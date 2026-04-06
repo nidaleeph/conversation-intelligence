@@ -10,9 +10,7 @@ import {
   Shield, TrendingUp, Activity
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  signals, alerts, agentProfiles,
-} from "@/lib/data";
+import { useAgents } from "@/hooks/queries/useAgents";
 
 const HERO_IMAGE = "https://d2xsxph8kpxj0f.cloudfront.net/310519663265683302/Mchx73LWdrS7gUExt8LJHT/hero-dark-network-jWoKoERoTMuRyKq9Q6VWGu.webp";
 
@@ -34,7 +32,9 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
 
 interface AgentSummary {
   name: string;
+  email: string;
   areas: string[];
+  isActive: boolean;
   totalSignals: number;
   buyerSearches: number;
   tenantSearches: number;
@@ -45,30 +45,37 @@ interface AgentSummary {
 }
 
 export default function Agents() {
+  const { data: agentsData, isLoading } = useAgents();
+  const agents = agentsData?.agents ?? [];
+
   const agentSummaries = useMemo<AgentSummary[]>(() => {
-    return agentProfiles.map(profile => {
-      const agentSignals = signals.filter(s => s.agent === profile.name);
-      const agentAlerts = alerts.filter(a => a.originatingAgent === profile.name || a.recipientAgent === profile.name);
-      const lastSignal = agentSignals.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+    return agents.map((agent: any) => ({
+      name: agent.name,
+      email: agent.email,
+      areas: agent.coverageAreas ?? [],
+      isActive: agent.isActive,
+      totalSignals: 0,
+      buyerSearches: 0,
+      tenantSearches: 0,
+      listings: 0,
+      alertCount: 0,
+      retainedCount: 0,
+      lastActive: "",
+    }));
+  }, [agents]);
 
-      return {
-        name: profile.name,
-        areas: profile.areas,
-        totalSignals: agentSignals.length,
-        buyerSearches: agentSignals.filter(s => s.type === "Buyer Search").length,
-        tenantSearches: agentSignals.filter(s => s.type === "Tenant Search").length,
-        listings: agentSignals.filter(s => s.type === "Property for Sale" || s.type === "Property for Rent").length,
-        alertCount: agentAlerts.length,
-        retainedCount: agentSignals.filter(s => s.retained === "Yes").length,
-        lastActive: lastSignal?.timestamp || "",
-      };
-    }).sort((a, b) => b.totalSignals - a.totalSignals);
-  }, []);
+  const totalAgents = agents.length;
+  const totalSignals = 0;
+  const totalAlerts = 0;
+  const activeAgents = agents.filter((a: any) => a.isActive).length;
 
-  const totalAgents = agentSummaries.length;
-  const totalSignals = agentSummaries.reduce((sum, a) => sum + a.totalSignals, 0);
-  const totalAlerts = agentSummaries.reduce((sum, a) => sum + a.alertCount, 0);
-  const activeAgents = agentSummaries.filter(a => a.totalSignals > 1).length;
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="text-sm text-[#6b7280]">Loading agents…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen">

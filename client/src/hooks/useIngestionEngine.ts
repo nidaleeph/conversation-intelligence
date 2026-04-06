@@ -6,7 +6,44 @@
 // ============================================================
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { type RawMessage, type Signal, type SignalType } from "@/lib/data";
+import type { SignalType } from "@shared/types";
+
+// Simulation-only types (not used by real API)
+interface RawMessage {
+  id: string;
+  timestamp: string;
+  sender: string;
+  platform: string;
+  rawText: string;
+  classification: SignalType;
+  confidence: number;
+  actionable: boolean;
+  retained: "Yes" | "No" | "Unknown";
+}
+
+interface Signal {
+  id: string;
+  type: SignalType;
+  location: string[];
+  postcodes: string[];
+  budget: string;
+  propertyType: string;
+  bedrooms: string;
+  bathrooms: string;
+  sqft: string;
+  outsideSpace: string;
+  parking: string;
+  condition: string;
+  feeRequired: string;
+  retained: "Yes" | "No" | "Unknown";
+  agent: string;
+  platform: string;
+  timestamp: string;
+  confidence: number;
+  summary: string;
+  status: "New" | "Reviewed" | "Alerted" | "Matched";
+  messageId: string;
+}
 
 export type IngestionPhase = "idle" | "receiving" | "classifying" | "extracting" | "complete";
 

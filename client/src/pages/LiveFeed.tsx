@@ -4,7 +4,7 @@
 // signal extraction, speed controls, manual message input
 // ============================================================
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
   Play, Pause, RotateCcw, Zap, MessageSquare, Radio, CheckCircle2,
   AlertCircle, Clock, ArrowRight, Send, Gauge, Activity, Eye,
@@ -15,7 +15,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useIngestionEngine, type IngestedMessage, type IngestionPhase } from "@/hooks/useIngestionEngine";
-import { type SignalType } from "@/lib/data";
+import { type SignalType } from "@shared/types";
+import { ingestMessage as apiIngestMessage } from "@/api/messages";
+import { useWebSocketEvent } from "@/hooks/useWebSocket";
 
 const LONDON_IMAGE = "https://d2xsxph8kpxj0f.cloudfront.net/310519663265683302/Mchx73LWdrS7gUExt8LJHT/hero-london-aerial-Rg8Bq5mRbAGvYzNpjFLFJb.webp";
 
@@ -266,6 +268,39 @@ export default function LiveFeed() {
     ingestMessage,
   } = useIngestionEngine();
 
+  const [realTimeMessages, setRealTimeMessages] = useState<any[]>([]);
+
+  useWebSocketEvent("livefeed:message", useCallback((data: any) => {
+    setRealTimeMessages((prev) => [
+      {
+        id: data.messageId,
+        senderName: data.senderName,
+        rawText: data.rawText,
+        sourceGroup: data.sourceGroup,
+        timestamp: data.timestamp,
+        phase: "receiving",
+        classification: null,
+      },
+      ...prev,
+    ].slice(0, 50));
+  }, []));
+
+  useWebSocketEvent("livefeed:classified", useCallback((data: any) => {
+    setRealTimeMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === data.messageId
+          ? {
+              ...msg,
+              phase: "complete",
+              classification: data.type,
+              confidence: data.confidence,
+              actionable: data.actionable,
+            }
+          : msg
+      )
+    );
+  }, []));
+
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [manualInput, setManualInput] = useState("");
   const [manualSender, setManualSender] = useState("");
@@ -284,6 +319,12 @@ export default function LiveFeed() {
       actionable: true,
       retained: "Unknown",
     });
+    // Send to real backend (fire-and-forget, don't block the simulation UI)
+    apiIngestMessage({
+      sourceGroup: "Manual Input",
+      senderName: manualSender || "Manual Test",
+      rawText: manualInput,
+    }).catch((err) => console.error("Failed to ingest to backend:", err));
     setManualInput("");
     setManualSender("");
     setShowCompose(false);
@@ -303,12 +344,12 @@ export default function LiveFeed() {
       <div className="relative h-32 overflow-hidden">
         <img src={LONDON_IMAGE} alt="" className="absolute inset-0 w-full h-full object-cover opacity-30" />
         <div className="absolute inset-0 bg-gradient-to-r from-[#1a1e23] via-[#1a1e23]/80 to-transparent" />
-        <div className="relative z-10 h-full flex items-center px-6">
+        <div className="relative z-10 h-full flex items-center px-6 pl-12 md:pl-6">
           <div>
             <h1 className="text-xl font-semibold text-white tracking-tight">Live Ingestion Feed</h1>
             <p className="text-[0.8rem] text-[#9ca3af] mt-0.5">Real-time WhatsApp message classification pipeline</p>
           </div>
-          <div className="ml-auto flex items-center gap-3">
+          <div className="ml-auto shrink-0 flex items-center gap-3">
             {isRunning && (
               <div className="flex items-center gap-1.5 bg-[#2ecc71]/10 backdrop-blur px-3 py-1.5 rounded-md border border-[#2ecc71]/30">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#2ecc71] animate-live-pulse" />
@@ -322,9 +363,9 @@ export default function LiveFeed() {
       <div className="px-6 py-5 space-y-5">
         {/* Control Panel */}
         <section className="bg-[#22272d] border border-[#3a3f45]/50 rounded-lg p-4">
-          <div className="flex items-center justify-between flex-wrap gap-4">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             {/* Controls */}
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <div className="flex items-center gap-1.5">
                 {!isRunning ? (
                   <Button
@@ -358,7 +399,7 @@ export default function LiveFeed() {
               </div>
 
               {/* Speed Control */}
-              <div className="flex items-center gap-2 ml-2 pl-3 border-l border-[#3a3f45]/40">
+              <div className="flex items-center gap-2 md:ml-2 md:pl-3 md:border-l border-[#3a3f45]/40">
                 <Gauge className="w-3.5 h-3.5 text-[#6b7280]" />
                 <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#6b7280]">Speed</span>
                 <div className="flex items-center gap-1">
@@ -380,7 +421,7 @@ export default function LiveFeed() {
               </div>
 
               {/* Manual compose */}
-              <div className="ml-2 pl-3 border-l border-[#3a3f45]/40">
+              <div className="md:ml-2 md:pl-3 md:border-l border-[#3a3f45]/40">
                 <Button
                   onClick={() => setShowCompose(!showCompose)}
                   size="sm"
@@ -398,7 +439,7 @@ export default function LiveFeed() {
             </div>
 
             {/* Live Stats */}
-            <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center gap-4">
               <div className="text-center">
                 <div className="text-lg font-bold text-white">{stats.totalIngested}</div>
                 <div className="text-[9px] text-[#6b7280] uppercase tracking-wider">Ingested</div>
@@ -473,6 +514,34 @@ export default function LiveFeed() {
             </div>
           )}
         </section>
+
+        {/* Live from Backend */}
+        {realTimeMessages.length > 0 && (
+          <div className="mb-4">
+            <h3 className="text-xs uppercase tracking-wider text-[#77d5c0] mb-2 font-semibold">
+              Live from Backend ({realTimeMessages.length})
+            </h3>
+            <div className="space-y-2 max-h-[300px] overflow-y-auto">
+              {realTimeMessages.slice(0, 10).map((msg: any) => (
+                <div key={msg.id} className="bg-[#22272d] rounded-lg p-3 border border-[#2a2f35]">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-semibold text-white">{msg.senderName}</span>
+                    {msg.classification ? (
+                      <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-[#77d5c0]/20 text-[#77d5c0]">
+                        {msg.classification}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#3b82f6]/20 text-[#3b82f6] animate-pulse">
+                        classifying...
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-[#9ca3af] line-clamp-2">{msg.rawText}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Main Content Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-5">

@@ -6,17 +6,17 @@
 
 import { useState, useMemo } from "react";
 import {
-  FileText, Search, ChevronRight, CheckCircle2, XCircle, AlertCircle,
-  Eye, MessageSquare, Zap, Filter, ArrowRight, Clock, Sparkles,
+  Search, CheckCircle2, XCircle, AlertCircle,
+  Zap, ArrowRight, Clock, Sparkles,
   ChevronDown, ChevronUp,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { rawMessages, signals, reviewQueue, type RawMessage, type SignalType } from "@/lib/data";
+import { useMessages } from "@/hooks/queries/useMessages";
+import { useSignals, useReviewSignal } from "@/hooks/queries/useSignals";
 import { toast } from "sonner";
 
 const SIGNAL_IMAGE = "https://d2xsxph8kpxj0f.cloudfront.net/310519663265683302/Mchx73LWdrS7gUExt8LJHT/hero-signal-flow-NJjFpRVPF2sCqBjyqVXHwV.webp";
@@ -36,6 +36,18 @@ const classificationColors: Record<string, string> = {
   "Landlord Signal": "#f97316",
 };
 
+// Enriched message shape combining API message + matched signal fields
+interface EnrichedMessage {
+  id: string;
+  senderName: string;
+  platform: string;
+  createdAt: string;
+  rawText: string;
+  classification: string;
+  confidence: number;
+  actionable: boolean;
+}
+
 function SectionHeader({ children }: { children: React.ReactNode }) {
   return (
     <h2 className="text-[0.65rem] font-bold uppercase tracking-[0.15em] text-[#77d5c0] mb-3">
@@ -44,11 +56,13 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
   );
 }
 
-function RawMessageRow({ msg, isExpanded, onToggle }: {
-  msg: RawMessage; isExpanded: boolean; onToggle: () => void;
+function RawMessageRow({ msg, matchedSignal, isExpanded, onToggle }: {
+  msg: EnrichedMessage;
+  matchedSignal: any;
+  isExpanded: boolean;
+  onToggle: () => void;
 }) {
   const color = classificationColors[msg.classification] || "#6b7280";
-  const matchedSignal = signals.find(s => s.messageId === msg.id);
 
   return (
     <div className="bg-[#22272d] border border-[#3a3f45]/50 rounded-lg overflow-hidden hover:border-[#3a3f45] transition-colors">
@@ -60,10 +74,10 @@ function RawMessageRow({ msg, isExpanded, onToggle }: {
         <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-0.5">
-            <span className="text-xs font-semibold text-white">{msg.sender}</span>
+            <span className="text-xs font-semibold text-white">{msg.senderName}</span>
             <span className="text-[10px] text-[#6b7280]">{msg.platform}</span>
             <span className="text-[10px] text-[#6b7280]">
-              {new Date(msg.timestamp).toLocaleDateString("en-GB", { day: "numeric", month: "short" })} {new Date(msg.timestamp).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+              {new Date(msg.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })} {new Date(msg.createdAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
             </span>
           </div>
           <p className="text-[11px] text-[#9ca3af] truncate">{msg.rawText}</p>
@@ -115,17 +129,19 @@ function RawMessageRow({ msg, isExpanded, onToggle }: {
                     <CheckCircle2 className="w-3.5 h-3.5 text-[#2ecc71]" />
                     <span className="text-[11px] font-semibold text-[#2ecc71]">Signal Extracted</span>
                   </div>
-                  <Row label="Type" value={matchedSignal.type} />
-                  <Row label="Location" value={matchedSignal.location.join(", ")} />
-                  <Row label="Budget" value={matchedSignal.budget} />
-                  <Row label="Property" value={matchedSignal.propertyType} />
-                  <Row label="Bedrooms" value={matchedSignal.bedrooms} />
-                  <Row label="Sqft" value={matchedSignal.sqft} />
-                  <Row label="Outside Space" value={matchedSignal.outsideSpace} />
-                  <Row label="Condition" value={matchedSignal.condition} />
-                  <Row label="Fee Required" value={matchedSignal.feeRequired} />
-                  <Row label="Retained" value={matchedSignal.retained} />
-                  <Row label="Status" value={matchedSignal.status} />
+                  <Row label="Type" value={matchedSignal.type ?? "-"} />
+                  <Row label="Location" value={matchedSignal.location?.join(", ") ?? "-"} />
+                  <Row label="Budget Min" value={matchedSignal.budgetMin != null ? `£${matchedSignal.budgetMin.toLocaleString()}` : "-"} />
+                  <Row label="Budget Max" value={matchedSignal.budgetMax != null ? `£${matchedSignal.budgetMax.toLocaleString()}` : "-"} />
+                  <Row label="Property" value={matchedSignal.propertyType ?? "-"} />
+                  <Row label="Bedrooms" value={matchedSignal.bedrooms != null ? String(matchedSignal.bedrooms) : "-"} />
+                  <Row label="Sqft" value={matchedSignal.sqft != null ? String(matchedSignal.sqft) : "-"} />
+                  <Row label="Outside Space" value={matchedSignal.outsideSpace != null ? (matchedSignal.outsideSpace ? "Yes" : "No") : "-"} />
+                  <Row label="Condition" value={matchedSignal.condition ?? "-"} />
+                  <Row label="Status" value={matchedSignal.status ?? "-"} />
+                  {matchedSignal.summary && (
+                    <Row label="Summary" value={matchedSignal.summary} />
+                  )}
                 </div>
               ) : (
                 <div className="bg-[#1a1e23] rounded-md p-3 flex items-center gap-2">
@@ -154,10 +170,17 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 function ReviewCard({ item, onAction }: {
-  item: typeof reviewQueue[0];
+  item: any;
   onAction: (id: string, action: "approve" | "reject") => void;
 }) {
-  const color = classificationColors[item.suggestedClassification] || "#6b7280";
+  const suggestedClassification = item.type ?? "Unclassified";
+  const color = classificationColors[suggestedClassification] || "#6b7280";
+  const confidence = typeof item.confidence === "number" ? item.confidence : 0;
+  const displayText = item.summary || "(no summary available)";
+  const reasonFlagged = confidence < 0.85
+    ? `Low confidence score (${Math.round(confidence * 100)}%) — manual review required`
+    : "Flagged for manual review";
+
   return (
     <div className="bg-[#22272d] border border-[#3a3f45]/50 rounded-lg p-4 hover:border-[#d4a843]/30 transition-colors">
       <div className="flex items-start justify-between mb-2">
@@ -169,21 +192,21 @@ function ReviewCard({ item, onAction }: {
           className="text-[10px] px-2 py-0.5 rounded font-medium"
           style={{ backgroundColor: `${color}20`, color }}
         >
-          {item.suggestedClassification}
+          {suggestedClassification}
         </span>
       </div>
-      <p className="text-[12px] text-[#c9cdd3] leading-relaxed mb-2">{item.rawMessage}</p>
+      <p className="text-[12px] text-[#c9cdd3] leading-relaxed mb-2">{displayText}</p>
       <div className="bg-[#1a1e23] rounded px-2.5 py-1.5 mb-3">
         <span className="text-[10px] text-[#6b7280]">Reason flagged: </span>
-        <span className="text-[10px] text-[#d4a843]">{item.reasonFlagged}</span>
+        <span className="text-[10px] text-[#d4a843]">{reasonFlagged}</span>
       </div>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1">
           <span className="text-[10px] text-[#6b7280]">Confidence</span>
           <div className="w-14 h-1 bg-[#3a3f45] rounded-full overflow-hidden">
-            <div className="h-full rounded-full bg-[#d4a843]" style={{ width: `${item.confidence * 100}%` }} />
+            <div className="h-full rounded-full bg-[#d4a843]" style={{ width: `${confidence * 100}%` }} />
           </div>
-          <span className="text-[10px] text-[#9ca3af]">{Math.round(item.confidence * 100)}%</span>
+          <span className="text-[10px] text-[#9ca3af]">{Math.round(confidence * 100)}%</span>
         </div>
         <div className="flex items-center gap-1.5">
           <Button
@@ -214,37 +237,81 @@ export default function Parser() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [classFilter, setClassFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [reviewItems, setReviewItems] = useState(reviewQueue);
+
+  const { data: messagesData, isLoading: messagesLoading } = useMessages({
+    search: searchQuery || undefined,
+    page: 1,
+    limit: 100,
+  });
+  const { data: signalsData } = useSignals({ limit: 100 });
+  const { data: reviewData } = useSignals({ needsReview: true, limit: 50 });
+  const reviewMutation = useReviewSignal();
+
+  const rawMessages = messagesData?.messages ?? [];
+  const allSignals = signalsData?.signals ?? [];
+  const reviewQueue = reviewData?.signals ?? [];
+
+  // Join messages with their classification data from signals
+  const messagesWithClassification = useMemo<EnrichedMessage[]>(() => {
+    return rawMessages.map((msg: any) => {
+      const signal = allSignals.find((s: any) => s.messageId === msg.id);
+      return {
+        id: msg.id,
+        senderName: msg.senderName,
+        platform: msg.platform,
+        createdAt: msg.createdAt,
+        rawText: msg.rawText,
+        classification: signal?.type ?? "Unclassified",
+        confidence: signal?.confidence ?? 0,
+        actionable: signal?.actionable ?? false,
+      };
+    });
+  }, [rawMessages, allSignals]);
 
   const filteredMessages = useMemo(() => {
-    return rawMessages.filter(msg => {
+    return messagesWithClassification.filter(msg => {
       if (classFilter !== "all" && msg.classification !== classFilter) return false;
-      if (searchQuery && !msg.rawText.toLowerCase().includes(searchQuery.toLowerCase()) && !msg.sender.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+      // Search is already applied server-side via the API query, but also filter locally
+      // for classification filter changes without re-fetching
       return true;
     });
-  }, [classFilter, searchQuery]);
+  }, [messagesWithClassification, classFilter]);
 
   const classificationStats = useMemo(() => {
     const stats: Record<string, number> = {};
-    rawMessages.forEach(msg => {
+    messagesWithClassification.forEach(msg => {
       stats[msg.classification] = (stats[msg.classification] || 0) + 1;
     });
     return Object.entries(stats)
       .map(([classification, count]) => ({ classification, count }))
       .sort((a, b) => b.count - a.count);
-  }, []);
+  }, [messagesWithClassification]);
 
   const handleReviewAction = (id: string, action: "approve" | "reject") => {
-    setReviewItems(prev => prev.filter(item => item.id !== id));
-    toast.success(
-      action === "approve"
-        ? "Classification approved — signal will be extracted"
-        : "Classification rejected — message reclassified",
+    reviewMutation.mutate(
+      { id, review: { approved: action === "approve" } },
       {
-        style: { backgroundColor: "#22272d", border: "1px solid #3a3f45", color: "#c9cdd3" },
+        onSuccess: () => {
+          toast.success(
+            action === "approve"
+              ? "Classification approved — signal will be extracted"
+              : "Classification rejected — message reclassified",
+            {
+              style: { backgroundColor: "#22272d", border: "1px solid #3a3f45", color: "#c9cdd3" },
+            }
+          );
+        },
       }
     );
   };
+
+  const actionableCount = messagesWithClassification.filter(m => m.actionable).length;
+  const avgConfidence = messagesWithClassification.length > 0
+    ? Math.round(messagesWithClassification.reduce((a, m) => a + m.confidence, 0) / messagesWithClassification.length * 100)
+    : 0;
+  const extractionRate = actionableCount > 0
+    ? Math.round((allSignals.length / actionableCount) * 100)
+    : 0;
 
   return (
     <div className="min-h-screen">
@@ -264,28 +331,32 @@ export default function Parser() {
         {/* Stats Bar */}
         <section>
           <SectionHeader>Classification Engine</SectionHeader>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
-            {classificationStats.map(stat => {
-              const color = classificationColors[stat.classification] || "#6b7280";
-              return (
-                <button
-                  key={stat.classification}
-                  onClick={() => setClassFilter(classFilter === stat.classification ? "all" : stat.classification)}
-                  className={`bg-[#22272d] border rounded-lg p-3 text-left transition-all ${
-                    classFilter === stat.classification
-                      ? "border-[#77d5c0]/50"
-                      : "border-[#3a3f45]/50 hover:border-[#3a3f45]"
-                  }`}
-                >
-                  <div className="flex items-center gap-1.5 mb-1">
-                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
-                    <span className="text-[10px] text-[#6b7280] truncate">{stat.classification}</span>
-                  </div>
-                  <span className="text-lg font-bold" style={{ color }}>{stat.count}</span>
-                </button>
-              );
-            })}
-          </div>
+          {messagesLoading ? (
+            <div className="text-[11px] text-[#6b7280] py-4">Loading classifications...</div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
+              {classificationStats.map(stat => {
+                const color = classificationColors[stat.classification] || "#6b7280";
+                return (
+                  <button
+                    key={stat.classification}
+                    onClick={() => setClassFilter(classFilter === stat.classification ? "all" : stat.classification)}
+                    className={`bg-[#22272d] border rounded-lg p-3 text-left transition-all ${
+                      classFilter === stat.classification
+                        ? "border-[#77d5c0]/50"
+                        : "border-[#3a3f45]/50 hover:border-[#3a3f45]"
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
+                      <span className="text-[10px] text-[#6b7280] truncate">{stat.classification}</span>
+                    </div>
+                    <span className="text-lg font-bold" style={{ color }}>{stat.count}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </section>
 
         {/* Search & Filters */}
@@ -319,26 +390,43 @@ export default function Parser() {
           {/* Message Feed */}
           <div className="lg:col-span-2">
             <SectionHeader>Raw Message Feed</SectionHeader>
-            <ScrollArea className="h-[600px]">
-              <div className="space-y-2 pr-3">
-                {filteredMessages.map(msg => (
-                  <RawMessageRow
-                    key={msg.id}
-                    msg={msg}
-                    isExpanded={expandedId === msg.id}
-                    onToggle={() => setExpandedId(expandedId === msg.id ? null : msg.id)}
-                  />
-                ))}
+            {messagesLoading ? (
+              <div className="flex items-center justify-center h-40 text-[11px] text-[#6b7280]">
+                <Clock className="w-4 h-4 mr-2 animate-spin" />
+                Loading messages...
               </div>
-            </ScrollArea>
+            ) : (
+              <ScrollArea className="h-[600px]">
+                <div className="space-y-2 pr-3">
+                  {filteredMessages.length > 0 ? (
+                    filteredMessages.map(msg => {
+                      const matchedSignal = allSignals.find((s: any) => s.messageId === msg.id);
+                      return (
+                        <RawMessageRow
+                          key={msg.id}
+                          msg={msg}
+                          matchedSignal={matchedSignal}
+                          isExpanded={expandedId === msg.id}
+                          onToggle={() => setExpandedId(expandedId === msg.id ? null : msg.id)}
+                        />
+                      );
+                    })
+                  ) : (
+                    <div className="flex items-center justify-center h-40 text-[11px] text-[#6b7280]">
+                      No messages found
+                    </div>
+                  )}
+                </div>
+              </ScrollArea>
+            )}
           </div>
 
           {/* Review Queue */}
           <div>
             <SectionHeader>Human Review Queue</SectionHeader>
             <div className="space-y-3">
-              {reviewItems.length > 0 ? (
-                reviewItems.map(item => (
+              {reviewQueue.length > 0 ? (
+                reviewQueue.map((item: any) => (
                   <ReviewCard key={item.id} item={item} onAction={handleReviewAction} />
                 ))
               ) : (
@@ -354,23 +442,23 @@ export default function Parser() {
             <div className="mt-5">
               <SectionHeader>Parser Performance</SectionHeader>
               <div className="bg-[#22272d] border border-[#3a3f45]/50 rounded-lg p-4 space-y-3">
-                <StatRow label="Total Processed" value={rawMessages.length.toString()} />
-                <StatRow label="Actionable" value={rawMessages.filter(m => m.actionable).length.toString()} accent />
-                <StatRow label="Non-Actionable" value={rawMessages.filter(m => !m.actionable).length.toString()} />
-                <StatRow label="Signals Extracted" value={signals.length.toString()} accent />
-                <StatRow label="Avg. Confidence" value={`${Math.round(rawMessages.reduce((a, m) => a + m.confidence, 0) / rawMessages.length * 100)}%`} />
-                <StatRow label="Pending Review" value={reviewItems.length.toString()} />
+                <StatRow label="Total Processed" value={messagesWithClassification.length.toString()} />
+                <StatRow label="Actionable" value={actionableCount.toString()} accent />
+                <StatRow label="Non-Actionable" value={(messagesWithClassification.length - actionableCount).toString()} />
+                <StatRow label="Signals Extracted" value={allSignals.length.toString()} accent />
+                <StatRow label="Avg. Confidence" value={`${avgConfidence}%`} />
+                <StatRow label="Pending Review" value={reviewQueue.length.toString()} />
                 <div className="pt-2 border-t border-[#3a3f45]/40">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-[10px] text-[#6b7280]">Extraction Rate</span>
                     <span className="text-[10px] text-[#77d5c0] font-semibold">
-                      {Math.round((signals.length / rawMessages.filter(m => m.actionable).length) * 100)}%
+                      {extractionRate}%
                     </span>
                   </div>
                   <div className="h-1.5 bg-[#3a3f45]/50 rounded-full overflow-hidden">
                     <div
                       className="h-full bg-[#77d5c0] rounded-full"
-                      style={{ width: `${(signals.length / rawMessages.filter(m => m.actionable).length) * 100}%` }}
+                      style={{ width: `${Math.min(extractionRate, 100)}%` }}
                     />
                   </div>
                 </div>

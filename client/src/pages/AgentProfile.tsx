@@ -15,10 +15,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  signals, alerts, agentProfiles, rawMessages,
-  type Signal, type Alert, type SignalType,
-} from "@/lib/data";
+import { useAgents } from "@/hooks/queries/useAgents";
 
 const HERO_IMAGE = "https://d2xsxph8kpxj0f.cloudfront.net/310519663265683302/Mchx73LWdrS7gUExt8LJHT/hero-signal-flow-NJjFpRVPF2sCqBjyqVXHwV.webp";
 
@@ -64,9 +61,9 @@ function StatCard({ label, value, icon: Icon, accent }: { label: string; value: 
   );
 }
 
-function MiniSignalCard({ signal }: { signal: Signal }) {
+function MiniSignalCard({ signal }: { signal: any }) {
   const typeColor = signalTypeColors[signal.type] || "#6b7280";
-  const uniquePostcodes = Array.from(new Set(signal.postcodes));
+  const uniquePostcodes: string[] = Array.from(new Set(signal.postcodes as string[]));
   return (
     <div
       className="bg-[#22272d] rounded-lg overflow-hidden hover:brightness-110 transition-all"
@@ -133,62 +130,34 @@ function MiniSignalCard({ signal }: { signal: Signal }) {
 
 export default function AgentProfile() {
   const params = useParams<{ name: string }>();
-  const agentName = decodeURIComponent(params.name || "");
+  const decodedName = decodeURIComponent(params.name || "");
+  const agentName = decodedName;
   const [activeTab, setActiveTab] = useState<"all" | "searches" | "listings" | "alerts">("all");
 
-  const profile = useMemo(() => agentProfiles.find(a => a.name === agentName), [agentName]);
-
-  // All signals originated by this agent
-  const agentSignals = useMemo(() =>
-    signals.filter(s => s.agent === agentName).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()),
-    [agentName]
+  const { data: agentsData, isLoading } = useAgents();
+  const agents = agentsData?.agents ?? [];
+  const agent = agents.find(
+    (a: any) => a.name.toLowerCase() === decodedName.toLowerCase()
   );
 
-  // Searches (Buyer + Tenant)
-  const searches = useMemo(() =>
-    agentSignals.filter(s => s.type === "Buyer Search" || s.type === "Tenant Search"),
-    [agentSignals]
-  );
+  // Signal and alert data — will be populated when matching engine is built
+  const agentSignals: any[] = [];
+  const agentAlerts: any[] = [];
 
-  // Listings (For Sale + For Rent)
-  const listings = useMemo(() =>
-    agentSignals.filter(s => s.type === "Property for Sale" || s.type === "Property for Rent"),
-    [agentSignals]
-  );
-
-  // Alerts where this agent is either originator or recipient
-  const agentAlerts = useMemo(() =>
-    alerts.filter(a => a.originatingAgent === agentName || a.recipientAgent === agentName)
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()),
-    [agentName]
-  );
-
-  // Raw messages from this agent
-  const agentMessages = useMemo(() =>
-    rawMessages.filter(m => m.sender === agentName),
-    [agentName]
-  );
+  // Derived collections (empty until signals API is wired)
+  const searches: any[] = [];
+  const listings: any[] = [];
 
   // Derived stats
-  const retainedCount = agentSignals.filter(s => s.retained === "Yes").length;
-  const highPriorityAlerts = agentAlerts.filter(a => a.priority === "High").length;
-  const avgConfidence = agentSignals.length > 0
-    ? Math.round(agentSignals.reduce((sum, s) => sum + s.confidence, 0) / agentSignals.length * 100)
-    : 0;
+  const retainedCount = 0;
+  const highPriorityAlerts = 0;
+  const avgConfidence = 0;
 
-  // Areas this agent operates in (from signals)
-  const activeAreas = useMemo(() => {
-    const areaMap: Record<string, number> = {};
-    agentSignals.forEach(s => s.location.forEach(l => { areaMap[l] = (areaMap[l] || 0) + 1; }));
-    return Object.entries(areaMap).sort((a, b) => b[1] - a[1]);
-  }, [agentSignals]);
+  // Areas from profile data
+  const activeAreas: [string, number][] = (agent?.coverageAreas ?? []).map((area: string) => [area, 0]);
 
-  // Signal type breakdown
-  const typeBreakdown = useMemo(() => {
-    const map: Record<string, number> = {};
-    agentSignals.forEach(s => { map[s.type] = (map[s.type] || 0) + 1; });
-    return Object.entries(map).sort((a, b) => b[1] - a[1]);
-  }, [agentSignals]);
+  // Signal type breakdown (empty until signals are wired)
+  const typeBreakdown: [string, number][] = [];
 
   const filteredSignals = useMemo(() => {
     switch (activeTab) {
@@ -197,9 +166,17 @@ export default function AgentProfile() {
       case "all": return agentSignals;
       default: return agentSignals;
     }
-  }, [activeTab, agentSignals, searches, listings]);
+  }, [activeTab]);
 
-  if (!profile) {
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="text-sm text-[#6b7280]">Loading agent profile…</p>
+      </div>
+    );
+  }
+
+  if (!agent) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4">
         <User className="w-12 h-12 text-[#4a5060]" />
@@ -230,7 +207,7 @@ export default function AgentProfile() {
               <h1 className="text-xl font-semibold text-white tracking-tight">{agentName}</h1>
               <div className="flex items-center gap-3 mt-1">
                 <span className="text-[11px] text-[#9ca3af]">
-                  {profile.areas.slice(0, 3).join(", ")}{profile.areas.length > 3 ? ` +${profile.areas.length - 3}` : ""}
+                  {(agent.coverageAreas ?? []).slice(0, 3).join(", ")}{(agent.coverageAreas ?? []).length > 3 ? ` +${(agent.coverageAreas ?? []).length - 3}` : ""}
                 </span>
                 <span className="text-[9px] text-[#4a5060]">|</span>
                 <span className="text-[11px] text-[#6b7280]">{agentSignals.length} signals</span>
