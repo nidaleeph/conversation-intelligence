@@ -11,6 +11,7 @@ import { signalsRoutes } from "./modules/signals/routes.js";
 import { analyticsRoutes } from "./modules/analytics/routes.js";
 import { alertsRoutes } from "./modules/alerts/routes.js";
 import { auditRoutes } from "./modules/audit/routes.js";
+import { webhookRoutes } from "./modules/webhook/routes.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,8 +19,16 @@ const __dirname = path.dirname(__filename);
 export function createApp() {
   const app = express();
 
-  // Body parsing
-  app.use(express.json());
+  // Body parsing — capture raw body on webhook routes for signature validation
+  app.use(
+    express.json({
+      verify: (req: any, _res, buf) => {
+        if (req.originalUrl?.startsWith("/api/webhooks/")) {
+          req.rawBody = buf;
+        }
+      },
+    })
+  );
   app.use(cookieParser());
 
   // CORS — restrict to app domain in production
@@ -29,6 +38,9 @@ export function createApp() {
       credentials: true,
     })
   );
+
+  // Webhook routes (no auth — Meta validates via signature)
+  app.use("/api/webhooks", webhookRoutes());
 
   // API routes
   app.use("/api/auth", authRoutes());
