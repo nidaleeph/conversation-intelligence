@@ -18,6 +18,9 @@ import { useIngestionEngine, type IngestedMessage, type IngestionPhase } from "@
 import { type SignalType } from "@shared/types";
 import { ingestMessage as apiIngestMessage } from "@/api/messages";
 import { useWebSocketEvent } from "@/hooks/useWebSocket";
+import { WhatsAppConnectionPanel } from "@/components/live-feed/WhatsAppConnectionPanel";
+import { MonitoredGroupsManager } from "@/components/live-feed/MonitoredGroupsManager";
+import { useWhatsAppStatus } from "@/hooks/useWhatsAppStatus";
 
 const LONDON_IMAGE = "https://d2xsxph8kpxj0f.cloudfront.net/310519663265683302/Mchx73LWdrS7gUExt8LJHT/hero-london-aerial-Rg8Bq5mRbAGvYzNpjFLFJb.webp";
 
@@ -269,6 +272,8 @@ export default function LiveFeed() {
   } = useIngestionEngine();
 
   const [realTimeMessages, setRealTimeMessages] = useState<any[]>([]);
+  const { status: waStatus } = useWhatsAppStatus();
+  const wwebConnected = waStatus?.state === "ready";
 
   useWebSocketEvent("livefeed:message", useCallback((data: any) => {
     setRealTimeMessages((prev) => [
@@ -361,6 +366,12 @@ export default function LiveFeed() {
       </div>
 
       <div className="px-6 py-5 space-y-5">
+        {/* WhatsApp Web Connection Panel */}
+        <WhatsAppConnectionPanel />
+
+        {/* Monitored Groups Management */}
+        <MonitoredGroupsManager connected={wwebConnected} />
+
         {/* Control Panel */}
         <section className="bg-[#22272d] border border-[#3a3f45]/50 rounded-lg p-4">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">

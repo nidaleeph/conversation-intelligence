@@ -12,6 +12,7 @@ import { analyticsRoutes } from "./modules/analytics/routes.js";
 import { alertsRoutes } from "./modules/alerts/routes.js";
 import { auditRoutes } from "./modules/audit/routes.js";
 import { webhookRoutes } from "./modules/webhook/routes.js";
+import { whatsappWebRoutes } from "./modules/whatsapp-web/routes.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -50,6 +51,7 @@ export function createApp() {
   app.use("/api/analytics", analyticsRoutes());
   app.use("/api/alerts", alertsRoutes());
   app.use("/api/audit", auditRoutes());
+  app.use("/api/whatsapp-web", whatsappWebRoutes());
 
   // Static files (frontend)
   const staticPath =

@@ -22,9 +22,58 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useAuth } from "@/hooks/useAuth";
 import { useUnreadAlertCount } from "@/hooks/queries/useAlerts";
 import { useWebSocketEvent } from "@/hooks/useWebSocket";
+import { useWhatsAppStatus } from "@/hooks/useWhatsAppStatus";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useCallback } from "react";
+
+const WHATSAPP_INDICATOR: Record<
+  string,
+  { label: string; color: string; tooltip: string; pulse: boolean }
+> = {
+  ready: {
+    label: "LIVE",
+    color: "#2ecc71",
+    tooltip: "WhatsApp connected — monitoring groups",
+    pulse: true,
+  },
+  qr: {
+    label: "SCAN",
+    color: "#d4a843",
+    tooltip: "WhatsApp waiting for QR scan",
+    pulse: true,
+  },
+  initializing: {
+    label: "INIT",
+    color: "#d4a843",
+    tooltip: "WhatsApp client starting up",
+    pulse: true,
+  },
+  disconnected: {
+    label: "RETRY",
+    color: "#f97316",
+    tooltip: "WhatsApp disconnected — reconnecting",
+    pulse: true,
+  },
+  error: {
+    label: "ERR",
+    color: "#ef4444",
+    tooltip: "WhatsApp connection error",
+    pulse: false,
+  },
+  off: {
+    label: "OFF",
+    color: "#6b7280",
+    tooltip: "WhatsApp integration disabled",
+    pulse: false,
+  },
+  unknown: {
+    label: "…",
+    color: "#6b7280",
+    tooltip: "Checking WhatsApp status",
+    pulse: false,
+  },
+};
 
 const navItems = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -47,6 +96,14 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     : navItems;
   const { data: unreadData } = useUnreadAlertCount();
   const unreadCount = unreadData?.count ?? 0;
+
+  const { status: waStatus } = useWhatsAppStatus();
+  const waKey = !waStatus
+    ? "unknown"
+    : !waStatus.enabled
+    ? "off"
+    : waStatus.state;
+  const waIndicator = WHATSAPP_INDICATOR[waKey] || WHATSAPP_INDICATOR.unknown;
 
   const queryClient = useQueryClient();
   useWebSocketEvent("alert:new", useCallback((data: any) => {
@@ -107,7 +164,12 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
                     )}
                     <Icon className="w-[18px] h-[18px]" strokeWidth={1.8} />
                     {isLive && (
-                      <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-[#2ecc71] animate-live-pulse" />
+                      <span
+                        className={`absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full ${
+                          waIndicator.pulse ? "animate-live-pulse" : ""
+                        }`}
+                        style={{ backgroundColor: waIndicator.color }}
+                      />
                     )}
                     {item.path === "/alerts" && unreadCount > 0 && (
                       <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-red-500 text-[8px] font-bold text-white flex items-center justify-center">
@@ -117,22 +179,43 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
                   </Link>
                 </TooltipTrigger>
                 <TooltipContent side="right" className="bg-[#22272d] text-[#f1f2f7] border-[#3a3f45] text-xs">
-                  {item.label}
+                  <div>{item.label}</div>
+                  {isLive && (
+                    <div className="text-[10px] mt-0.5" style={{ color: waIndicator.color }}>
+                      WhatsApp · {waIndicator.label} — {waIndicator.tooltip}
+                    </div>
+                  )}
                 </TooltipContent>
               </Tooltip>
             );
           })}
         </nav>
 
-        {/* LIVE indicator */}
-        <div className="flex flex-col items-center gap-1 mb-2">
-          <div className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#2ecc71] animate-live-pulse" />
-            <span className="text-[9px] font-semibold tracking-[0.15em] uppercase text-[#6b7280]">
-              Live
-            </span>
-          </div>
-        </div>
+        {/* WhatsApp status indicator — dot stacked above short label */}
+        <Tooltip delayDuration={0}>
+          <TooltipTrigger asChild>
+            <div className="flex flex-col items-center gap-1 mb-2 cursor-help">
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  waIndicator.pulse ? "animate-live-pulse" : ""
+                }`}
+                style={{ backgroundColor: waIndicator.color }}
+              />
+              <span
+                className="text-[8px] font-bold tracking-[0.1em] uppercase leading-none"
+                style={{ color: waIndicator.color }}
+              >
+                {waIndicator.label}
+              </span>
+            </div>
+          </TooltipTrigger>
+          <TooltipContent side="right" className="bg-[#22272d] text-[#f1f2f7] border-[#3a3f45] text-xs">
+            <div className="font-semibold" style={{ color: waIndicator.color }}>
+              WhatsApp · {waIndicator.label}
+            </div>
+            <div className="text-[#9ca3af] mt-0.5">{waIndicator.tooltip}</div>
+          </TooltipContent>
+        </Tooltip>
 
         {/* User section */}
         <div className="mt-auto pb-2 flex flex-col items-center gap-1">

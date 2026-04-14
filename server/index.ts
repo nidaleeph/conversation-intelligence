@@ -40,10 +40,19 @@ async function startServer() {
     console.log(`Server running on http://localhost:${port}/`);
   });
 
+  // Start WhatsApp Web client (only if enabled via env)
+  const { startWhatsAppClient, stopWhatsAppClient } = await import(
+    "./modules/whatsapp-web/client.js"
+  );
+  startWhatsAppClient().catch((err) => {
+    console.error("[wwebjs] startup failed:", err);
+  });
+
   // Graceful shutdown
   async function shutdown() {
     console.log("Shutting down...");
     server.close();
+    await stopWhatsAppClient();
     await stopBoss();
     await pool.end();
     process.exit(0);

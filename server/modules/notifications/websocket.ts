@@ -49,6 +49,27 @@ export function setupWebSocket(server: Server) {
       console.log(`WebSocket connected: ${agentName} (${agentId})`);
       ws.send(JSON.stringify({ type: "connected", agentId, agentName }));
 
+      // Push current WhatsApp status immediately so reconnected clients sync
+      // up to the live state without waiting for the next state change.
+      try {
+        const { getWhatsAppStatus } = await import(
+          "../whatsapp-web/client.js"
+        );
+        const snapshot = getWhatsAppStatus();
+        ws.send(
+          JSON.stringify({
+            type: "whatsapp:status",
+            data: {
+              state: snapshot.state,
+              reason: "initial-sync",
+              hasQr: snapshot.lastQr !== null,
+              phone: snapshot.clientInfo.phone,
+              pushname: snapshot.clientInfo.pushname,
+            },
+          })
+        );
+      } catch {}
+
       ws.on("close", () => {
         connections.get(agentId)?.delete(ws);
         if (connections.get(agentId)?.size === 0) {
